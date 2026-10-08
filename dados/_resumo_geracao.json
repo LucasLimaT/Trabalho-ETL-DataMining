@@ -1,0 +1,16 @@
+{
+  "semente": 20262,
+  "escala": 1.0,
+  "legado_clientes": 47250,
+  "legado_produtos": 3000,
+  "legado_pedidos": 130000,
+  "legado_itens": 397086,
+  "ecom_clientes": 85000,
+  "ecom_produtos": 12000,
+  "ecom_pedidos": 280000,
+  "ecom_itens": 995367,
+  "sac_linhas": 96140,
+  "avaliacoes": 160000,
+  "clientes_sobrepostos": 14850,
+  "total_registros": 2205843
+}
