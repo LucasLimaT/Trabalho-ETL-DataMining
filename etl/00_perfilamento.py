@@ -26,7 +26,6 @@ from sqlalchemy import text
 from config import (ARQ_AVALIACOES, ARQ_SAC, DIR_SAIDA,
                     eng_mysql, eng_origem)
 
-os.makedirs(DIR_SAIDA, exist_ok=True)
 pd.set_option("display.width", 160)
 
 
