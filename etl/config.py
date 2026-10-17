@@ -6,6 +6,8 @@ from sqlalchemy import create_engine
 
 DIR_DADOS = os.environ.get("DIR_DADOS", "/dados")
 DIR_SAIDA = os.environ.get("DIR_SAIDA", "/saida")
+os.makedirs(DIR_DADOS, exist_ok=True)
+os.makedirs(DIR_SAIDA, exist_ok=True)
 
 # Origem 1 — MySQL legado. Atenção ao charset: a base é latin1.
 MYSQL_DSN = os.environ.get(
