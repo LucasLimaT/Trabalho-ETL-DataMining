@@ -164,13 +164,9 @@ CREATE TABLE abt.recompra_90d (
   cliente_sk          BIGINT  NOT NULL REFERENCES dw.dim_cliente (cliente_sk),
   data_corte          DATE    NOT NULL,
   alvo_recompra_90d   SMALLINT NOT NULL CHECK (alvo_recompra_90d IN (0,1)),
-  -- ------------------------------------------------------------------
-  -- A PARTIR DAQUI: atributos preditivos desenhados por vocês.
-  -- Exemplos do que é legítimo (calculado somente até data_corte):
-  --   recencia_dias, frequencia_pedidos, valor_monetario_total,
-  --   ticket_medio, prazo_medio_entrega, qtd_atendimentos_sac,
-  --   nota_media_avaliacoes, categorias_distintas, canal_predominante
-  -- ------------------------------------------------------------------
+  frequencia_pedidos  BIGINT NOT NULL CHECK (frequencia_pedidos >= 0),
+  valor_monetario     NUMERIC(18,2) NOT NULL,
+  recencia_dias       INT NULL CHECK (recencia_dias >= 0),
   PRIMARY KEY (cliente_sk, data_corte)
 );
 
@@ -186,4 +182,17 @@ CREATE TABLE IF NOT EXISTS qa.execucao_assercao (
   valor_obtido NUMERIC NULL,
   valor_esperado TEXT NULL,
   aprovado     BOOLEAN NOT NULL
+);
+
+-- Referências consultadas diretamente nas origens em cada carga da semana 3.
+CREATE TABLE IF NOT EXISTS qa.reconciliacao_financeira (
+  executado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sistema                  TEXT NOT NULL,
+  total_bruto_origem       NUMERIC(18,2) NOT NULL,
+  ajuste_semantico         NUMERIC(18,2) NOT NULL,
+  total_equivalente_origem NUMERIC(18,2) NOT NULL,
+  total_dw                 NUMERIC(18,2) NOT NULL,
+  diferenca_pct            NUMERIC NOT NULL,
+  aprovado                 BOOLEAN NOT NULL,
+  PRIMARY KEY (executado_em, sistema)
 );

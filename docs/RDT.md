@@ -1,7 +1,7 @@
-# Registro de Decisões de Transformação (RDT) · parcial, fichas 01 a 09
+# Registro de Decisões de Transformação (RDT) · parcial, fichas 01 a 13
 
 **Equipe:** Diogo Augusto de Siqueira Cândido, Líbia Canhete Alves e Cruz, Lucas Taveira De Lima
-**Data:** 15/10/2026  **Versão do pipeline:** Semana 2 (etapas 01 e 02)
+**Data:** 24/10/2026  **Versão do pipeline:** Semana 3 (etapas 01 a 04, ABT correta)
 
 Os números deste documento vêm da execução de `01_extracao.py` e
 `02_transformacao.py` sobre a base gerada com semente 20262, escala 1.0. Cada
@@ -12,8 +12,8 @@ asserção citada fica gravada na tabela `qa.execucao_assercao`, nas etapas
 schema `stg`. A etapa 2 grava os dados já tratados no schema `cnf`. Ali cada
 registro ainda usa o identificador que tinha na origem, e um conjunto de
 colunas de marcação (verdadeiro ou falso) indica quais registros alguma decisão
-alterou. Na Semana 3, a etapa 3 só vai trocar esses identificadores pelas
-chaves do DW e montar o esquema estrela. Criamos o `cnf` por dois motivos: a
+alterou. Na Semana 3, a etapa 3 usa esses identificadores para carregar
+as chaves do DW e montar o esquema estrela. Criamos o `cnf` por dois motivos: a
 etapa 3 não precisa refazer nenhuma decisão, e qualquer número deste documento
 pode ser conferido com uma consulta.
 
@@ -706,3 +706,129 @@ registradas aqui:
 | RDT-07 | Classificar até o nível certo, o resto vazio | 452 sem categoria; 1.632 sem subcategoria | 15,1% e 54,4% do legado | Sim: categoria de 15% dos itens do legado |
 | RDT-08 | Ausências classificadas; sentinelas marcadas | 3.483 entregas; 5.791 fechamentos; 11.378 notas | 0,85%; 6,1%; 12,0% | Sim: datas reais que não voltam |
 | RDT-09 | Horário de Brasília | 280.000 pedidos + 160.000 avaliações | 100% do e-commerce | Sim: fuso explícito; lojas fora de UTC−3 |
+
+
+---
+
+## Atualização da semana 3- fichas 10 a 13
+
+A carga continua as regras das fichas anteriores. Suas verificações ficam registradas em
+*qa.execucao_assercao*, na etapa *03_carga_dw*.
+
+### *RDT-10* - Itens sem pedido
+
+*Etapa 03_carga_dw - carrega_fato_item.*
+
+Na *cnf*, *20.577* itens não têm pedido correspondente. Para definir como esses
+registros seriam tratados na carga, foram consideradas três opções:
+
+1. *Excluir esses itens, perdendo a possibilidade de investigá-los.*
+2. *Inventar pedidos para manter os itens no DW, mesmo sem conhecer a compra.*
+3. *Carregar só os itens com pedido e preservar os demais na cnf.*
+
+Foi adotado o carregamento apenas dos itens com pedido, enquanto os órfãos permaneceram
+em *cnf.item*, com *orfao=true*. Assim, os casos sem pedido continuam disponíveis para
+investigação sem criar compras fictícias.
+
+Essa escolha deixa *20.577* itens (*1,48%*) fora das análises do *DW* e permite carregar
+os outros *1.371.876* (*98,52%*). Para verificar se essa separação não perdeu nem
+duplicou linhas, a carga foi conferida de três formas:
+
+1. *A quantidade carregada deve ser igual à de itens com pedido válido. Nesta execução,
+   foram 1.371.876 linhas.*
+2. *1.371.876 carregados + 20.577 órfãos = 1.392.453 itens da cnf.*
+3. *Por pedido, a quantidade de linhas e os valores dos itens coincidem com as medidas
+   do pedido.*
+
+### *RDT-11* - O que cada linha representa
+
+*Etapa 03_carga_dw - carrega_fato_pedido e carrega_fato_item.*
+
+A base reúne *410.000* pedidos e *1.371.876* itens válidos. Como a junção direta de
+pedidos, itens e atendimentos pode repetir o valor da compra, foram consideradas duas
+opções para organizar esses dados:
+
+1. *Reunir pedido, item e atendimento na mesma tabela, repetindo medidas.*
+2. *Separar os fatos e ligar cada registro pelas chaves correspondentes.*
+
+Foi adotada a separação dos fatos por tipo de acontecimento, de modo que cada linha
+representa um pedido ou um item. Nesse desenho, o sistema de origem e o identificador
+distinguem pedidos com o mesmo número.
+
+Esse desenho abrange os *410.000* pedidos e os *1.371.876* itens válidos, ou *100%* de
+cada conjunto, sem excluir linhas. Como os fatos têm níveis de detalhe diferentes,
+precisam ser agregados antes das junções, e o frete permanece no pedido, sem rateio
+entre itens.
+
+Para conferir esse desenho, foram procurados pedidos repetidos por sistema e
+identificador e itens sem pedido. Por pedido, foram comparadas as quantidades de linhas
+de item e os valores brutos, descontos e valores líquidos.
+
+### *RDT-12* - Pedido sem cliente
+
+*Etapa 03_carga_dw - carrega_fato_pedido.*
+
+Os pedidos da *cnf* usam os clientes unificados na entrega anterior, e nenhum dos
+*410.000* pedidos ficou sem cliente (*0%*). Para tratar uma possível ausência em cargas
+futuras, foram considerados três caminhos:
+
+1. *Excluir os pedidos sem cliente, reduzindo o total financeiro.*
+2. *Preservar o pedido com um cliente “desconhecido”, reunindo pessoas diferentes no
+   mesmo cadastro.*
+3. *Interromper a carga e investigar a referência ausente.*
+
+Foi decidido interromper a carga quando faltar a referência do cliente, registrando a
+falha e desfazendo a transação para preservar o *DW* anterior. Com isso, a atualização
+precisa aguardar a correção, mas nenhuma compra é excluída nem atribuída a um cadastro
+fictício.
+
+Para confirmar essa proteção, foi testada uma referência de cliente ausente, e a carga
+foi recusada sem alterar o *DW* anterior.
+
+### *RDT-13* - Ligações de atendimentos e avaliações
+
+*Etapa 03_carga_dw - carrega_fatos_auxiliares.*
+
+Só um dos *95.000* atendimentos tem cliente compatível com o pedido, mas foi aberto
+antes da compra. Entre *160.000* avaliações, *80* citam um produto do pedido e apenas
+*38* também respeitam a ordem entre compra e envio. Diante dessas incompatibilidades,
+foram consideradas três opções:
+
+1. *Confiar só no número do pedido, aceitando ligações contraditórias.*
+2. *Excluir os registros contraditórios, alterando as contagens.*
+3. *Manter todos os registros e vincular ao pedido só os casos coerentes.*
+
+Para preservar os registros sem aceitar ligações incompatíveis, o vínculo com pedidos
+existentes foi condicionado aos critérios abaixo:
+
+1. *No SAC, o cliente deve ser o mesmo e a compra já deve ter ocorrido na abertura do
+   atendimento.*
+2. *Na avaliação, o produto deve fazer parte do pedido e a compra já deve ter ocorrido
+   no envio.*
+
+Com esses critérios, *95.000* atendimentos (*100%*) e *159.962* avaliações (*99,97625%*)
+ficam sem pedido, enquanto *38* avaliações (*0,02375%*) mantêm o vínculo. Os casos sem
+ligação ficam fora das análises por pedido, e suas referências permanecem na *cnf*.
+
+Para conferir essa decisão, foram comparadas as contagens de atendimentos e avaliações e
+verificados cliente, produto e datas das ligações aceitas.
+
+### *ABT* inicial e limites
+
+A partir dos pedidos carregados, foi construída uma *ABT* com *107.642* clientes com
+pedido até *30/06/2025*, respeitando os seguintes cortes:
+
+1. *Os atributos usam apenas pedidos não cancelados até 30/06/2025.*
+2. *O alvo considera compras não canceladas entre 01/07 e 28/09/2025.*
+
+Os *2.976* clientes com apenas pedidos cancelados até o corte receberam frequência e
+valor zero, com recência vazia. Na janela futura, o alvo *1* foi observado em *24.021*
+clientes (*22,3156%*).
+
+Esses resultados devem ser lidos com as limitações da entrega anterior. Sem o histórico
+das mudanças de status, a *ABT* reconstrói o passado com os dados atuais. Além disso,
+permanecem os riscos da unificação de clientes da ficha *02*.
+
+Pelos critérios de vínculo da ficha *13*, o *SAC* e as avaliações não foram usados nos
+atributos iniciais. Com essa base definida, a versão com vazamento e a comparação no
+*Orange* ficam para a semana *4*.

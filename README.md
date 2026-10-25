@@ -24,6 +24,28 @@ docker compose logs -f seed   # acompanhe a geração e a carga (~3 a 5 minutos)
 
 Quando o serviço `seed` terminar com `ambiente pronto.`, está tudo no lugar.
 
+### Entrega da semana 3
+
+As fichas 10 a 13 estão no [RDT](docs/RDT.md).
+
+Depois das etapas 1 e 2, execute:
+
+```bash
+docker compose exec etl python 03_carga_dw.py
+docker compose exec etl python 04_abt.py --correta
+```
+
+As verificações de qualidade são executadas pelas próprias etapas do pipeline
+e registradas em `qa.execucao_assercao`. A comparação financeira fica em
+`qa.reconciliacao_financeira`.
+
+Para restaurar o dump, crie um banco vazio. Substitua `nome_do_banco_novo` abaixo
+pelo nome escolhido. O comando grava somente nesse banco:
+
+```bash
+gzip -dc docs/entrega_3/mercatto_dw.sql.gz | docker compose exec -T pg_dw psql -v ON_ERROR_STOP=1 -U postgres -d nome_do_banco_novo
+```
+
 ### O que subiu
 
 | Serviço | O que é | Acesso |

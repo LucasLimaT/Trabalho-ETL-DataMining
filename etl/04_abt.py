@@ -30,6 +30,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from config import DATA_CORTE, DATA_FIM_ALVO, eng_dw
+from gravacao import copy_pg
 from qualidade.assercoes import Suite
 
 
@@ -60,31 +61,30 @@ LEFT JOIN compras_na_janela j ON j.cliente_sk = b.cliente_sk
 """
 
 
+SQL_ATRIBUTOS = f"""
+SELECT p.cliente_sk,
+       COUNT(*) FILTER (
+           WHERE s.status_conformado <> 'CANCELADO'
+       ) AS frequencia_pedidos,
+       COALESCE(
+           SUM(p.valor_total) FILTER (WHERE s.status_conformado <> 'CANCELADO'),
+           0
+       )::numeric(18,2) AS valor_monetario,
+       DATE '{DATA_CORTE}' - MAX(p.data_pedido_sk) FILTER (
+           WHERE s.status_conformado <> 'CANCELADO'
+       ) AS recencia_dias
+FROM dw.fato_pedido p
+JOIN dw.dim_status s USING(status_sk)
+WHERE p.data_pedido_sk <= DATE '{DATA_CORTE}'
+GROUP BY p.cliente_sk
+"""
+
+
 def monta_atributos_corretos(dw):
-    """
-    TODO 4.1 — atributos preditivos. Todo agregado tem de ter, no WHERE,
-    a cláusula   p.data_pedido_sk <= DATE '{corte}'.
-
-    Sugestões (desenhem as suas, estas são só ponto de partida):
-      recencia_dias          dias entre a última compra e a data de corte
-      frequencia_pedidos     nº de pedidos não cancelados até o corte
-      valor_monetario        soma de valor_total até o corte
-      ticket_medio           valor_monetario / frequencia_pedidos
-      prazo_medio_entrega    média de dias_entrega dos pedidos entregues
-      taxa_cancelamento      cancelados / total
-      categorias_distintas   nº de categorias nivel1 compradas
-      canal_predominante     canal com mais pedidos
-      qtd_atendimentos_sac   atendimentos abertos até o corte
-      nota_media_avaliacoes  média das avaliações submetidas até o corte
-      tempo_como_cliente     dias entre o primeiro pedido e o corte
-
-    Cuidado com dois detalhes fáceis de errar:
-      · clientes sem pedidos no período geram NaN em médias — decidam o
-        tratamento e registrem (NaN não é zero);
-      · atributo derivado de dim_cliente pode carregar informação atualizada
-        depois do corte. Verifiquem antes de usar.
-    """
-    raise NotImplementedError
+    # Mantém os valores monetários sem conversão para float.
+    # A recência fica vazia quando o cliente só tem pedidos cancelados.
+    df = pd.read_sql(text(SQL_ATRIBUTOS), dw, coerce_float=False)
+    return df.astype({"recencia_dias": "Int64"})
 
 
 def monta_atributos_com_vazamento(dw):
@@ -104,40 +104,115 @@ def monta_atributos_com_vazamento(dw):
 
 def grava(df, dw, sufixo):
     tabela = "recompra_90d" if sufixo == "correta" else "recompra_90d_vazamento"
-    df.to_sql(tabela, dw, schema="abt", if_exists="replace",
-              index=False, method="multi", chunksize=5_000)
+    if sufixo == "correta":
+        # Reaproveita a tabela para não perder as chaves e os tipos das colunas.
+        dw.execute(
+            text(
+                """
+                TRUNCATE abt.recompra_90d;
+                ALTER TABLE abt.recompra_90d
+                ADD COLUMN IF NOT EXISTS frequencia_pedidos bigint NOT NULL
+                    CHECK(frequencia_pedidos >= 0),
+                ADD COLUMN IF NOT EXISTS valor_monetario numeric(18,2) NOT NULL,
+                ADD COLUMN IF NOT EXISTS recencia_dias integer
+                    CHECK(recencia_dias >= 0)
+                """
+            )
+        )
+        df.to_sql(
+            tabela,
+            dw,
+            schema="abt",
+            if_exists="append",
+            index=False,
+            method=copy_pg,
+            chunksize=5_000,
+        )
+    else:
+        df.to_sql(
+            tabela,
+            dw,
+            schema="abt",
+            if_exists="replace",
+            index=False,
+            method="multi",
+            chunksize=5_000,
+        )
     print(f"abt.{tabela}: {len(df)} linhas, {df.shape[1]} colunas")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--correta", action="store_true")
-    ap.add_argument("--vazamento", action="store_true")
+    grupo = ap.add_mutually_exclusive_group(required=True)
+    grupo.add_argument("--correta", action="store_true")
+    grupo.add_argument("--vazamento", action="store_true")
     args = ap.parse_args()
-    if not (args.correta or args.vazamento):
-        ap.error("escolha --correta ou --vazamento")
 
     dw = eng_dw()
     alvo = pd.read_sql(text(SQL_ALVO), dw)
-    print(f"alvo: {len(alvo)} clientes | taxa de recompra = "
-          f"{alvo['alvo_recompra_90d'].mean():.3f}")
+    print(
+        f"alvo: {len(alvo)} clientes | taxa de recompra = "
+        f"{alvo['alvo_recompra_90d'].mean():.3f}"
+    )
 
     qa = Suite(etapa="04_abt_" + ("correta" if args.correta else "vazamento"))
-    qa.entre("taxa do alvo", float(alvo["alvo_recompra_90d"].mean()), 0.02, 0.60,
-             "classe extremamente desbalanceada indica erro na janela")
+    qa.entre(
+        "taxa do alvo",
+        float(alvo["alvo_recompra_90d"].mean()),
+        0.02,
+        0.60,
+        "classe extremamente desbalanceada indica erro na janela",
+    )
     qa.unico("cliente_sk no alvo", alvo["cliente_sk"])
 
-    atributos = (monta_atributos_corretos(dw) if args.correta
-                 else monta_atributos_com_vazamento(dw))
+    atributos = (
+        monta_atributos_corretos(dw)
+        if args.correta
+        else monta_atributos_com_vazamento(dw)
+    )
 
     antes = len(alvo)
     abt = alvo.merge(atributos, on="cliente_sk", how="left")
     qa.cardinalidade_preservada("junção alvo x atributos", antes, len(abt))
 
-    # TODO 4.3 — na versão CORRETA, acrescente uma asserção que verifique,
-    # por amostragem, que nenhum atributo usa dado posterior ao corte.
-    # Uma forma prática: recalcule um atributo restringindo a data e compare.
-
-    grava(abt, dw, "correta" if args.correta else "vazamento")
-    qa.registrar(dw)
-    qa.imprimir()
+    qa.igual("contagem da ABT igual ao alvo", len(abt), antes)
+    qa.sem_nulos("frequencia_pedidos", abt["frequencia_pedidos"])
+    qa.sem_nulos("valor_monetario", abt["valor_monetario"])
+    try:
+        if qa.falhou():
+            raise ValueError("ABT reprovada antes da gravação")
+        with dw.begin() as cx:
+            grava(abt, cx, "correta" if args.correta else "vazamento")
+            # Confere os atributos com um novo cálculo sobre os pedidos até o corte.
+            divergencias = cx.execute(
+                text(
+                    f"""
+                    WITH historico AS (
+                        SELECT p.cliente_sk, COUNT(*) frequencia,
+                               SUM(p.valor_total) valor,
+                               DATE '{DATA_CORTE}' - MAX(p.data_pedido_sk) recencia
+                        FROM dw.fato_pedido p
+                        JOIN dw.dim_status s USING(status_sk)
+                        WHERE p.data_pedido_sk < DATE '{DATA_CORTE}' + 1
+                          AND s.status_conformado <> 'CANCELADO'
+                        GROUP BY p.cliente_sk
+                    )
+                    SELECT COUNT(*) FROM abt.recompra_90d a
+                    LEFT JOIN historico h USING(cliente_sk)
+                    WHERE a.frequencia_pedidos
+                              IS DISTINCT FROM COALESCE(h.frequencia, 0)
+                       OR a.valor_monetario
+                              IS DISTINCT FROM COALESCE(h.valor, 0)
+                       OR a.recencia_dias IS DISTINCT FROM h.recencia
+                    """
+                )
+            ).scalar_one()
+            qa.igual("atributos conferidos sem dados futuros", divergencias, 0)
+            if qa.falhou():
+                raise ValueError("ABT reprovada: gravação desfeita")
+    except Exception:
+        qa.igual("ABT concluida sem erro", 0, 1)
+        raise
+    finally:
+        qa.registrar(dw)
+        qa.imprimir()
