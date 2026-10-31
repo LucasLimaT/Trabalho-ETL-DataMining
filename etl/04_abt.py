@@ -80,6 +80,31 @@ GROUP BY p.cliente_sk
 """
 
 
+# Mesmos atributos, sem o filtro de data em frequencia_pedidos e recencia_dias:
+# os dois passam a enxergar a janela do alvo e o que vem depois dela.
+# O HAVING mantém a população do alvo (clientes com pedido até o corte).
+SQL_ATRIBUTOS_VAZAMENTO = f"""
+SELECT p.cliente_sk,
+       COUNT(*) FILTER (
+           WHERE s.status_conformado <> 'CANCELADO'
+       ) AS frequencia_pedidos,
+       COALESCE(
+           SUM(p.valor_total) FILTER (
+               WHERE s.status_conformado <> 'CANCELADO'
+                 AND p.data_pedido_sk <= DATE '{DATA_CORTE}'
+           ),
+           0
+       )::numeric(18,2) AS valor_monetario,
+       DATE '{DATA_CORTE}' - MAX(p.data_pedido_sk) FILTER (
+           WHERE s.status_conformado <> 'CANCELADO'
+       ) AS recencia_dias
+FROM dw.fato_pedido p
+JOIN dw.dim_status s USING(status_sk)
+GROUP BY p.cliente_sk
+HAVING bool_or(p.data_pedido_sk <= DATE '{DATA_CORTE}')
+"""
+
+
 def monta_atributos_corretos(dw):
     # Mantém os valores monetários sem conversão para float.
     # A recência fica vazia quando o cliente só tem pedidos cancelados.
@@ -99,7 +124,11 @@ def monta_atributos_com_vazamento(dw):
 
     Documente no RDT qual vazamento você introduziu em cada coluna.
     """
-    raise NotImplementedError
+    df = pd.read_sql(text(SQL_ATRIBUTOS_VAZAMENTO), dw)
+    # Vazamento sutil: média e desvio de todas as linhas, antes da partição.
+    v = df["valor_monetario"].astype(float)
+    df["valor_monetario"] = (v - v.mean()) / v.std()
+    return df.astype({"recencia_dias": "Int64"})
 
 
 def grava(df, dw, sufixo):
@@ -178,6 +207,21 @@ if __name__ == "__main__":
     qa.igual("contagem da ABT igual ao alvo", len(abt), antes)
     qa.sem_nulos("frequencia_pedidos", abt["frequencia_pedidos"])
     qa.sem_nulos("valor_monetario", abt["valor_monetario"])
+    if args.vazamento:
+        # Média zero sobre a ABT inteira prova que o z-score não veio só do treino.
+        qa.entre(
+            "valor_monetario normalizado com a base inteira",
+            abs(float(abt["valor_monetario"].mean())),
+            0,
+            1e-9,
+        )
+    tabela = "recompra_90d" if args.correta else "recompra_90d_vazamento"
+    # No vazamento, valor_monetario está em z-score e não entra na conferência.
+    confere_valor = (
+        "OR a.valor_monetario IS DISTINCT FROM COALESCE(h.valor, 0)"
+        if args.correta
+        else ""
+    )
     try:
         if qa.falhou():
             raise ValueError("ABT reprovada antes da gravação")
@@ -197,17 +241,24 @@ if __name__ == "__main__":
                           AND s.status_conformado <> 'CANCELADO'
                         GROUP BY p.cliente_sk
                     )
-                    SELECT COUNT(*) FROM abt.recompra_90d a
+                    SELECT COUNT(*) FROM abt.{tabela} a
                     LEFT JOIN historico h USING(cliente_sk)
                     WHERE a.frequencia_pedidos
                               IS DISTINCT FROM COALESCE(h.frequencia, 0)
-                       OR a.valor_monetario
-                              IS DISTINCT FROM COALESCE(h.valor, 0)
                        OR a.recencia_dias IS DISTINCT FROM h.recencia
+                       {confere_valor}
                     """
                 )
             ).scalar_one()
-            qa.igual("atributos conferidos sem dados futuros", divergencias, 0)
+            if args.correta:
+                qa.igual("atributos conferidos sem dados futuros", divergencias, 0)
+            else:
+                qa.maior_igual(
+                    "frequência/recência enxergam o futuro",
+                    divergencias,
+                    1,
+                    "a versão de comparação precisa conter o vazamento",
+                )
             if qa.falhou():
                 raise ValueError("ABT reprovada: gravação desfeita")
     except Exception:

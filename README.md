@@ -46,6 +46,37 @@ pelo nome escolhido. O comando grava somente nesse banco:
 gzip -dc docs/entrega_3/mercatto_dw.sql.gz | docker compose exec -T pg_dw psql -v ON_ERROR_STOP=1 -U postgres -d nome_do_banco_novo
 ```
 
+### Entrega da semana 4
+
+O [RDT integral](docs/RDT.md) traz as fichas 01 a 15, a tabela-resumo e a
+reflexão. O [relatório de resultados](docs/RELATORIO_RESULTADOS.md) compara as
+duas ABTs.
+
+Depois dos seis comandos do pipeline, rode o experimento fora do contêiner,
+num ambiente com Python 3.12 e o Orange. O ambiente se cria uma vez, igual em
+Windows, Linux e macOS:
+
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate    Linux e macOS: source .venv/bin/activate
+pip install -r requirements.txt orange3==3.40.0 PyQt6==6.8.1 PyQt6-WebEngine==6.8.0
+python orange/experimento.py
+```
+
+As versões são as que vêm com o Orange 3.40 do site oficial. Com outras, os
+números do relatório podem mudar. Quem já tem o Orange 3.40 instalado pode
+pular o `.venv` e rodar o script com o Python que acompanha o Orange (no
+macOS, `/Applications/Orange.app/Contents/MacOS/python`). O Orange e o PyQt6,
+que são a parte gráfica, ficam fora do `requirements.txt` porque ele vai para
+as imagens Docker, e o Orange não roda no contêiner. Selecione esse `.venv`
+como interpretador no editor para ele resolver as importações do
+`experimento.py`.
+
+O script grava `orange/fluxo_correta.ows` e `orange/fluxo_vazamento.ows`, que
+só diferem no CSV de entrada, e imprime AUC, acurácia balanceada e matrizes de
+confusão. Os fluxos abrem no Orange por **File → Open** e leem os CSVs de
+`saida/` pelo caminho relativo.
+
 ### O que subiu
 
 | Serviço | O que é | Acesso |
