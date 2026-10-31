@@ -1,0 +1,6 @@
+# O build usa a raiz como contexto só para ler o requirements.txt.
+.git
+.venv
+dados
+saida
+docs

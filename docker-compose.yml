@@ -73,7 +73,9 @@ services:
 
   # ------------------------------ geração e carga inicial (executa uma vez)
   seed:
-    build: ./gerador
+    build:
+      context: .
+      dockerfile: gerador/Dockerfile
     container_name: lab_seed
     environment:
       DIR_DADOS: /dados
@@ -93,7 +95,9 @@ services:
 
   # ------------------------------------------- ambiente de trabalho do aluno
   etl:
-    build: ./etl
+    build:
+      context: .
+      dockerfile: etl/Dockerfile
     container_name: lab_etl
     environment:
       DIR_DADOS: /dados
