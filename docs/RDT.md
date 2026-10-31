@@ -1,7 +1,7 @@
-# Registro de Decisões de Transformação (RDT) · parcial, fichas 01 a 13
+# Registro de Decisões de Transformação (RDT) · integral, fichas 01 a 15
 
 **Equipe:** Diogo Augusto de Siqueira Cândido, Líbia Canhete Alves e Cruz, Lucas Taveira De Lima
-**Data:** 24/10/2026  **Versão do pipeline:** Semana 3 (etapas 01 a 04, ABT correta)
+**Data:** 31/10/2026  **Versão do pipeline:** Semana 4 (etapas 01 a 05, ABT correta e com vazamento)
 
 Os números deste documento vêm da execução de `01_extracao.py` e
 `02_transformacao.py` sobre a base gerada com semente 20262, escala 1.0. Cada
@@ -693,23 +693,6 @@ registradas aqui:
 
 ---
 
-## Tabela-resumo (fichas 01 a 09)
-
-| Ficha | Decisão | Registros afetados | % da base | Perde informação? |
-|---|---|---:|---:|---|
-| RDT-01 | Carga completa | 2.205.864 linhas | 100% | Sim: histórico entre cargas |
-| RDT-02 | CPF (válido ou não) + nome; nome + cidade + UF sem CPF | 14.818 clientes unidos | 12,9% dos clientes | Sim: ~75 fusões erradas, ~160 pessoas não unidas |
-| RDT-03 | Cadastros repetidos juntados por e-mail + nome + CPF compatível | 2.250 cadastros | 4,8% de CLIENTES | Sim: grafia do cadastro descartado (guardada na stg) |
-| RDT-04 | CANCELADO + motivo quando conhecido | 52.177 pedidos | 12,7% dos pedidos | Sim: motivo no legado (15.774); SEPARACAO e processing juntos |
-| RDT-05 | Valores recalculados a partir dos itens, frete separado | 410.000 pedidos | 100% | Sim: comparação direta com total_amount |
-| RDT-06 | Frete sem sinal; −1 = 0; preço suspeito só marcado | 1.174 pedidos; 4.056 itens; 31 produtos | 0,29%; 0,29%; 0,21% | Sim: estornos reais, se houver; preços inflados mantidos |
-| RDT-07 | Classificar até o nível certo, o resto vazio | 452 sem categoria; 1.632 sem subcategoria | 15,1% e 54,4% do legado | Sim: categoria de 15% dos itens do legado |
-| RDT-08 | Ausências classificadas; sentinelas marcadas | 3.483 entregas; 5.791 fechamentos; 11.378 notas | 0,85%; 6,1%; 12,0% | Sim: datas reais que não voltam |
-| RDT-09 | Horário de Brasília | 280.000 pedidos + 160.000 avaliações | 100% do e-commerce | Sim: fuso explícito; lojas fora de UTC−3 |
-
-
----
-
 ## Atualização da semana 3- fichas 10 a 13
 
 A carga continua as regras das fichas anteriores. Suas verificações ficam registradas em
@@ -832,3 +815,197 @@ permanecem os riscos da unificação de clientes da ficha *02*.
 Pelos critérios de vínculo da ficha *13*, o *SAC* e as avaliações não foram usados nos
 atributos iniciais. Com essa base definida, a versão com vazamento e a comparação no
 *Orange* ficam para a semana *4*.
+
+---
+
+## Atualização da semana 4 - fichas 14 e 15
+
+As duas fichas vêm da etapa `04_abt.py` e do experimento no Orange
+(`orange/experimento.py`). As asserções ficam em `qa.execucao_assercao`, nas
+etapas `04_abt_correta` e `04_abt_vazamento`. Os resultados dos modelos estão
+no [relatório de resultados](RELATORIO_RESULTADOS.md).
+
+---
+
+## Ficha RDT-14 · Atributos da ABT e verificação de ausência de vazamento
+
+**Etapa do pipeline:** 04_abt · `SQL_ATRIBUTOS`, `monta_atributos_corretos`
+
+**O que o dado mostrava:** a ABT tem 107.642 clientes com algum pedido até
+30/06/2025, e 24.021 deles (22,3%) compraram de novo na janela do alvo. Antes
+de escolher os atributos, medimos a AUC de cada candidato sozinho, calculado só
+com pedidos até o corte. Nenhum passou de 0,55:
+
+| Atributo candidato (até o corte) | AUC sozinho |
+|---|---:|
+| `frequencia_pedidos` (pedidos não cancelados) | 0,536 |
+| `valor_monetario` | 0,532 |
+| `recencia_dias` | 0,515 |
+| sistemas em que o cliente comprou (1 ou 2) | 0,546 |
+| pedidos nos últimos 365 dias | 0,520 |
+| atendimentos do SAC | 0,521 |
+| pedidos cancelados | 0,512 |
+| `origem_unificacao = AMBOS` | 0,554 |
+
+O gerador explica o teto baixo. Ele sorteia o cliente e a data de cada pedido
+de forma independente (`gerador/gerar_dados.py`, linhas 283-284 no legado e
+394-395 no e-commerce). Assim, o histórico de um cliente diz pouco sobre a
+compra seguinte. O sinal que sobra vem de quantos pedidos cada sistema reparte
+entre seus clientes: quem está nos dois sistemas recompra 35,9%, contra 20,7%
+no e-commerce e 18,8% no legado.
+
+Dois campos do cadastro trazem informação do futuro. Dos 14.737 clientes
+`AMBOS` da ABT, 2.417 (16,4%) só se cadastraram no e-commerce depois de
+30/06/2025, então `origem_unificacao` conta, para esses clientes, um fato que
+ainda não existia na data do corte. E 15.880 clientes da ABT (14,8%) têm
+`dt_primeiro_cadastro` posterior ao corte, embora tenham pedido antes dele.
+
+**Alternativas consideradas:**
+
+1. Manter os três atributos da Semana 3 (frequência, valor e recência), todos
+   com pedidos até o corte e sem cancelados.
+2. Somar atributos do cadastro: `origem_unificacao` e tempo desde o cadastro.
+   São os que mais separam as classes, mas trazem dados posteriores ao corte.
+3. Somar atributos legítimos calculados até o corte: sistemas usados, pedidos
+   em 365 dias, cancelados e atendimentos do SAC.
+
+**Decisão:** alternativa 1.
+
+**Justificativa:** a alternativa 2 introduz vazamento em 2.417 clientes por
+`origem_unificacao` e em 15.880 por `dt_primeiro_cadastro`, e o objetivo desta
+ABT é responder à pergunta sem olhar para depois de 30/06/2025. Testamos a
+alternativa 3 no mesmo protocolo do Orange: a AUC subiu de 0,527 para 0,545
+(Naive Bayes), de 0,532 para 0,549 (Regressão Logística) e de 0,496 para 0,505
+(Árvore). Com ganho de no máximo 0,018, preferimos manter nas duas versões do
+experimento os mesmos três atributos. Assim, a comparação da RDT-15 isola o
+efeito do vazamento, sem misturar atributos novos.
+
+**O que se perde:**
+* até 0,018 de AUC que a alternativa 3 acrescentaria;
+* a diferença entre cliente de um sistema e cliente dos dois, que é o maior
+  sinal do dado. Uma versão futura pode usar "sistemas em que comprou até o
+  corte", que mede quase o mesmo sem vazar;
+* 2.976 clientes (2,8%) só têm pedidos cancelados até o corte. Eles ficam com
+  frequência e valor zero e recência vazia, e o modelo não os distingue de quem
+  nunca comprou de verdade.
+
+**Registros afetados:** 107.642 clientes (100% da ABT), 2.976 (2,8%) com
+recência vazia.
+
+**Asserção associada:** `atributos conferidos sem dados futuros` = 0. Depois
+de gravar, a etapa recalcula frequência, valor e recência só com pedidos até o
+corte e conta os clientes em que algum valor difere da ABT (obtido 0). Também
+`taxa do alvo` entre 0,02 e 0,60 (obtido 0,223), `junção alvo x atributos` e
+`contagem da ABT igual ao alvo` (107.642 nas duas).
+
+---
+
+## Ficha RDT-15 · Vazamentos introduzidos de propósito na versão de comparação
+
+**Etapa do pipeline:** 04_abt · `SQL_ATRIBUTOS_VAZAMENTO`,
+`monta_atributos_com_vazamento`; tabela `abt.recompra_90d_vazamento`
+
+**O que o dado mostrava:** o DW tem pedidos até 30/12/2025, ou seja, 68.406
+pedidos (16,7%) depois do corte, 34.903 deles depois da janela do alvo. Na
+ABT, 43.150 clientes (40,1%) têm algum pedido não cancelado depois do corte.
+Um atributo que enxergue esses pedidos conhece o alvo.
+
+**Alternativas consideradas:**
+
+1. Tirar o filtro de data de `frequencia_pedidos` e `recencia_dias`, mantendo
+   a fórmula. A frequência passa a contar pedidos até 30/12/2025, e a recência
+   fica negativa para quem comprou depois do corte.
+2. Calcular a recência a partir da última data da base (30/12/2025) em vez da
+   data do corte. Também vaza, mas os valores continuam positivos e o erro fica
+   mais difícil de achar.
+3. Para o vazamento sutil: z-score de `valor_monetario` com média e desvio de
+   todas as 107.642 linhas, antes da partição treino/teste, contra o z-score
+   correto, com média e desvio só do treino.
+
+**Decisão:** alternativas 1 e 3. `valor_monetario` continua calculado até o
+corte, então o z-score é o único vazamento nessa coluna.
+
+| Coluna | Vazamento | Como ficou |
+|---|---|---|
+| `frequencia_pedidos` | sem filtro de data | média de 4,40 pedidos entre quem recomprou e 2,97 entre quem não recomprou (na versão correta: 2,97 e 2,71) |
+| `recencia_dias` | sem filtro de data | negativa em 43.150 clientes; nenhum cliente com recência ≥ 0 recomprou |
+| `valor_monetario` | z-score antes da partição | média 6.924,10 e desvio 5.115,01 da base inteira; no treino seriam 6.947,10 e 5.115,48 |
+
+**Justificativa:** a alternativa 1 reproduz o erro mais comum em ABTs, uma
+consulta escrita sem a cláusula de data, e muda uma linha de SQL. Escolhemos
+ela, e não a 2, porque o experimento compara o efeito dos vazamentos com as
+mesmas fórmulas da versão correta. O z-score global reproduz um erro de
+pré-processamento que nenhuma consulta denuncia.
+
+**O que se perde:** a validade da versão inteira. Na data do corte, os pedidos
+de julho a dezembro ainda não existem, então o modelo treinado nela não pode
+ser usado. A AUC medida (até 0,930) não acontece em produção. A tabela também é
+gravada por `to_sql` com `replace`, sem as restrições da ABT correta (chave
+primária, `recencia_dias >= 0`), justamente para aceitar valores negativos.
+Ela existe só para o experimento.
+
+**Registros afetados:** 43.150 clientes (40,1%) com frequência e recência
+diferentes da versão correta; 107.642 (100%) com valor normalizado; a recência
+vazia cai de 2.976 para 1.863 clientes, porque parte dos que só tinham
+cancelados até o corte comprou depois.
+
+**Asserção associada:** `frequência/recência enxergam o futuro` ≥ 1 (obtido
+43.150), que recalcula os dois atributos com pedidos até o corte e conta as
+diferenças; `valor_monetario normalizado com a base inteira`, que exige média
+zero sobre todas as linhas (obtido 1,4 × 10⁻¹⁶). No experimento, o
+`orange/experimento.py` confirma que as duas versões usam os mesmos 32.292
+clientes de teste.
+
+---
+
+## Tabela-resumo
+
+| Ficha | Decisão | Registros afetados | % da base | Perde informação? |
+|---|---|---:|---:|---|
+| RDT-01 | Carga completa | 2.205.864 linhas | 100% | Sim: histórico entre cargas |
+| RDT-02 | CPF (válido ou não) + nome; nome + cidade + UF sem CPF | 14.818 clientes unidos | 12,9% dos clientes | Sim: ~75 fusões erradas, ~160 pessoas não unidas |
+| RDT-03 | Cadastros repetidos juntados por e-mail + nome + CPF compatível | 2.250 cadastros | 4,8% de CLIENTES | Sim: grafia do cadastro descartado (guardada na stg) |
+| RDT-04 | CANCELADO + motivo quando conhecido | 52.177 pedidos | 12,7% dos pedidos | Sim: motivo no legado (15.774); SEPARACAO e processing juntos |
+| RDT-05 | Valores recalculados a partir dos itens, frete separado | 410.000 pedidos | 100% | Sim: comparação direta com total_amount |
+| RDT-06 | Frete sem sinal; −1 = 0; preço suspeito só marcado | 1.174 pedidos; 4.056 itens; 31 produtos | 0,29%; 0,29%; 0,21% | Sim: estornos reais, se houver; preços inflados mantidos |
+| RDT-07 | Classificar até o nível certo, o resto vazio | 452 sem categoria; 1.632 sem subcategoria | 15,1% e 54,4% do legado | Sim: categoria de 15% dos itens do legado |
+| RDT-08 | Ausências classificadas; sentinelas marcadas | 3.483 entregas; 5.791 fechamentos; 11.378 notas | 0,85%; 6,1%; 12,0% | Sim: datas reais que não voltam |
+| RDT-09 | Horário de Brasília | 280.000 pedidos + 160.000 avaliações | 100% do e-commerce | Sim: fuso explícito; lojas fora de UTC−3 |
+| RDT-10 | Itens sem pedido ficam só na cnf | 20.577 itens | 1,48% dos itens | Sim: itens fora das análises do DW |
+| RDT-11 | Um fato por grão: pedido e item | 410.000 pedidos; 1.371.876 itens | 100% | Sim: frete fica no pedido, sem rateio por item |
+| RDT-12 | Pedido sem cliente interrompe a carga | 0 pedidos | 0% | Sim: a atualização espera a correção |
+| RDT-13 | SAC e avaliações ligados ao pedido só quando coerentes | 95.000 atendimentos e 159.962 avaliações sem pedido | 100% e 99,98% | Sim: análises por pedido sem SAC e quase sem avaliações |
+| RDT-14 | Três atributos até o corte; cadastro fora | 107.642 clientes; 2.976 sem recência | 100%; 2,8% da ABT | Sim: até 0,018 de AUC; sinal de cliente nos dois sistemas |
+| RDT-15 | Frequência e recência sem filtro de data; z-score global | 43.150 clientes vazados; 107.642 normalizados | 40,1%; 100% da ABT | Sim: a versão inteira deixa de ser utilizável |
+
+---
+
+## Reflexão final
+
+**1. Qual decisão mais mudaria o resultado do modelo?** Medimos uma: o filtro
+de data dos atributos (RDT-15). Sem ele, a AUC da árvore vai de 0,496 para
+0,930. Entre as decisões de limpeza, apostamos na identidade do cliente
+(RDT-02), e essa aposta ainda é uma hipótese para o modelo. Medimos o efeito
+no alvo: quem a regra uniu nos dois sistemas recompra 35,9%, contra cerca de
+20% nos demais. Se não tivéssemos unido as 14.818 pessoas, cada metade
+apareceria como um cliente que comprou menos, e parte dos que voltaram pelo
+outro sistema contaria como alvo 0. Não treinamos o modelo sem a unificação
+para medir a diferença na AUC.
+
+**2. Alguma decisão por conveniência técnica afetaria pessoas reais?** Sim, a
+regra nome + cidade + UF da RDT-02. Escolhemos ela para unir clientes sem CPF,
+e ela funde cerca de 75 pares de pessoas diferentes. Numa campanha de retenção,
+cada fusão soma as compras de duas pessoas: o cliente parece fiel, sai da lista
+de risco, e uma das pessoas deixa de receber a oferta. O mesmo vale para os
+2.976 clientes que só tinham pedidos cancelados (RDT-14): para o modelo, quem
+teve o pagamento recusado parece alguém que nunca quis comprar.
+
+**3. Que informação gostaríamos de ter tido?** O histórico de mudanças dos
+pedidos, com data de cada status, para reconstruir a base como ela estava em
+30/06/2025 (RDT-01). Também uma data de cadastro confiável: 15.880 clientes
+têm pedido antes do próprio cadastro, e por isso não conseguimos usar o tempo
+de relacionamento. Por fim, algum dado de comportamento além dos pedidos. No
+gerador, cada pedido recebe um cliente sorteado, e o melhor atributo legítimo
+que achamos chega a uma AUC de 0,55. Sem um sinal de comportamento, nenhuma
+limpeza leva o modelo correto muito além disso, e preferimos mostrar esse
+teto a esconder o resultado.
