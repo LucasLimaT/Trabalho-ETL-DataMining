@@ -36,7 +36,9 @@ def tipo_orange(serie):
 
 def exporta(tabela, arquivo, dw):
     try:
-        df = pd.read_sql(text(f"SELECT * FROM abt.{tabela}"), dw)
+        # Ordem fixa: o Data Sampler sorteia por posição, e as duas versões
+        # precisam ter o mesmo conjunto de teste.
+        df = pd.read_sql(text(f"SELECT * FROM abt.{tabela} ORDER BY cliente_sk"), dw)
     except Exception as e:                                   # noqa: BLE001
         print(f"  [pular] abt.{tabela} indisponível: {type(e).__name__}")
         return
