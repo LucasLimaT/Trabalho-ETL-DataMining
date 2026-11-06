@@ -12,7 +12,8 @@ README), depois do 05_exportar_orange.py:
    diferença entre os dois é o arquivo de entrada.
 2. Refaz em código o que os fluxos fazem: mesmo sorteio do Data Sampler e
    learners criados pelos próprios widgets, com os padrões deles. Imprime
-   AUC, CA e acurácia balanceada (o Test & Score não mostra a última).
+   AUC, CA e acurácia balanceada (o Test & Score não mostra a última) e
+   grava os resultados em saida/resultados_experimento.md.
 3. Isola o vazamento sutil: ABT correta com valor_monetario em z-score
    calculado na base inteira, contra o z-score calculado só no treino.
 """
@@ -154,14 +155,20 @@ if __name__ == "__main__":
     for versao, arquivo in VERSOES.items():
         gera_fluxo(arquivo, os.path.join(DIR_ORANGE, f"fluxo_{versao}.ows"), registro)
 
-    print("\n| Versão | Modelo | AUC | CA | Acurácia balanceada | VP | FP | FN | VN |")
-    print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
+    linhas = []
+
+    def saida(texto=""):
+        print(texto)
+        linhas.append(texto)
+
+    saida("\n| Versão | Modelo | AUC | CA | Acurácia balanceada | VP | FP | FN | VN |")
+    saida("|---|---|---:|---:|---:|---:|---:|---:|---:|")
     tabelas = {}
     for versao, arquivo in VERSOES.items():
         data = Table(os.path.join(DIR_SAIDA, arquivo))
         treino, teste = particao(data)
         tabelas[versao] = (data, treino, teste)
-        print("\n".join(avalia(treino, teste, versao)))
+        saida("\n".join(avalia(treino, teste, versao)))
 
     # Vazamento sutil isolado: só muda de onde vêm a média e o desvio.
     data, treino, teste = tabelas["correta"]
@@ -169,22 +176,31 @@ if __name__ == "__main__":
     vt = treino.get_column("valor_monetario")
     glob = (v.mean(), v.std(ddof=1))
     trein = (vt.mean(), vt.std(ddof=1))
-    print("\n".join(avalia(zscore(treino, "valor_monetario", *trein),
+    saida("\n".join(avalia(zscore(treino, "valor_monetario", *trein),
                            zscore(teste, "valor_monetario", *trein),
                            "correta + z-score do treino")))
-    print("\n".join(avalia(zscore(treino, "valor_monetario", *glob),
+    saida("\n".join(avalia(zscore(treino, "valor_monetario", *glob),
                            zscore(teste, "valor_monetario", *glob),
                            "correta + z-score da base inteira")))
-    print(f"\nmédia/desvio de valor_monetario: base inteira = {glob[0]:.2f}/{glob[1]:.2f}; "
+    saida("\nClasse positiva = recompra (alvo 1):\n"
+          "- VP (verdadeiro positivo): previu \"recompra\" e o cliente recomprou.\n"
+          "- FP (falso positivo): previu \"recompra\", mas o cliente não recomprou.\n"
+          "- FN (falso negativo): previu \"não recompra\", mas o cliente recomprou.\n"
+          "- VN (verdadeiro negativo): previu \"não recompra\" e o cliente não recomprou.")
+    saida(f"\nmédia/desvio de valor_monetario: base inteira = {glob[0]:.2f}/{glob[1]:.2f}; "
           f"só treino = {trein[0]:.2f}/{trein[1]:.2f}")
 
-    print(f"\npartição: {len(treino)} treino, {len(teste)} teste; "
+    saida(f"\npartição: {len(treino)} treino, {len(teste)} teste; "
           f"positivos no teste = {teste.Y.mean():.4f}")
     mesmo_teste = np.array_equal(tabelas["correta"][2].metas[:, 0],
                                  tabelas["vazamento"][2].metas[:, 0])
-    print(f"mesmo conjunto de teste nas duas versões: {mesmo_teste}")
+    saida(f"mesmo conjunto de teste nas duas versões: {mesmo_teste}")
     assert mesmo_teste, "as duas versões precisam ser avaliadas nos mesmos clientes"
 
-    print("\nAUC de cada atributo sozinho, no teste:")
+    saida("\nAUC de cada atributo sozinho, no teste:")
     for versao, (_, _, teste) in tabelas.items():
-        print(f"  {versao}: {auc_univariada(teste)}")
+        saida(f"- {versao}: {auc_univariada(teste)}")
+
+    with open(os.path.join(DIR_SAIDA, "resultados_experimento.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(linhas).lstrip() + "\n")
+    print(f"\nresultados gravados em {os.path.relpath(os.path.join(DIR_SAIDA, 'resultados_experimento.md'))}")
